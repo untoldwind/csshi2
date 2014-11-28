@@ -1,0 +1,4 @@
+#compdef csshi2
+
+clusters=$(/usr/local/bin/csshi2 -l)
+_arguments "1:Cluster:($clusters)"

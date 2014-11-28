@@ -1,0 +1,262 @@
+#!/usr/bin/perl
+
+use strict;
+use feature 'switch';
+use Foundation;
+use POSIX;
+use YAML::Syck; 
+
+$YAML::Syck::ImplicitTyping = 1;
+
+# PerlObjCBridge::setTracing(1);
+
+# Load the Scripting-Bridge
+@NSMutableDictionary::ISA = @NSDictionary::ISA = @SBApplication::ISA = qw(PerlObjCBridge);
+
+NSBundle->bundleWithPath_(
+    '/System/Library/Frameworks/ScriptingBridge.framework' # Loads AppKit too
+)->load;
+
+my $systemevents = SBApplication->applicationWithBundleIdentifier_("com.apple.systemevents");
+my $itermApp = SBApplication->applicationWithBundleIdentifier_("com.googlecode.iterm2");
+my $itermPredicate = NSPredicate->predicateWithFormat_("bundleIdentifier == 'com.googlecode.iterm2'");
+my $itermProcess = $systemevents->processes()->filteredArrayUsingPredicate_($itermPredicate)->firstObject();
+
+package SshEndpoint;
+sub new {
+	my $class = shift;
+	my $self = {
+		_user => shift,
+		_host => shift
+	};
+	bless $self, $class;
+	$self;
+}
+
+sub command {
+	my $self = shift;
+
+	sprintf("ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -l %s %s", $self->{_user}, $self->{_host});
+}
+
+package Cluster;
+sub read {
+	my ($file, $match) = @_;
+	my %clusters = %{YAML::Syck::LoadFile($file)};
+	my @endpoints = ();
+
+	filter("", \%clusters, \@endpoints, $match);
+
+	Cluster->new(\@endpoints);
+}
+
+sub filter {
+	my $prefix = shift;
+	my $clusters_ref = shift;
+	my $endpoints_ref = shift;
+	my $match = shift;
+
+	while((my $key, my $value) = each(%$clusters_ref)) {
+		if ($value->{hosts}) {
+			if (index($prefix . $key, $match) == 0) {
+				push(@$endpoints_ref, map { SshEndpoint->new($value->{user}, $_) } @{$value->{hosts}});
+			}
+		} elsif (ref $value eq ref {}) {
+			filter($prefix . $key . "/", $value, $endpoints_ref, $match);
+		}
+	}
+}
+
+sub list {
+	my $file = shift;
+	my %clusters = %{YAML::Syck::LoadFile($file)};
+
+	listKeys("", \%clusters);
+}
+
+sub listKeys {
+	my $prefix = shift;
+	my $clusters_ref = shift;
+
+	while((my $key, my $value) = each(%$clusters_ref)) {
+		if ($value->{hosts}) {
+			print $prefix . $key . " ";
+		} elsif (ref $value eq ref {}) {
+			listKeys($prefix . $key . "/", $value);
+		}
+	}
+}
+
+sub new {
+	my $class = shift;
+	my $self = {
+		_endpoints => shift
+	};
+	bless $self, $class;
+	$self;
+}
+
+sub count {
+	my $self = shift;
+
+	scalar @{$self->{_endpoints}};
+}
+
+sub rows {
+	my $self = shift;
+
+	POSIX::ceil($self->count / $self->cols);
+}
+
+sub cols {
+	my $self = shift;
+
+	POSIX::ceil(sqrt($self->count));
+}
+
+sub sshCommands {
+	my $self = shift;
+
+	map { $_->command } @{$self->{_endpoints}};
+}
+
+package Iterm;
+sub new {
+	my $class = shift;
+	my $self = {
+	};
+	bless $self, $class;
+	$self;
+}
+
+sub openCluster {
+	my ($self, $cluster) = @_;
+
+	$itermProcess->menuBars()->count() > 0 || die "UI automation disabled or disallowed";
+
+	my $terminal = $itermApp->classForScriptingClass_("terminal")->alloc()->init();
+
+	$itermApp->terminals()->addObject_($terminal);
+	my $session = $terminal->launchSession_("Default session");
+	my $shellMenu = $itermProcess->menuBars()->firstObject()->menuBarItems()->objectAtIndex_(2)->menus()->firstObject()->menuItems();
+	my $windowMenu = $itermProcess->menuBars()->firstObject()->menuBarItems()->objectAtIndex_(7)->menus()->firstObject()->menuItems();
+	my $selectSplitPaneMenu = $windowMenu->objectAtIndex_(15)->menus()->firstObject()->menuItems();
+	my $selectNextPane = $selectSplitPaneMenu->objectAtIndex_(5);
+	my $splitVert = $shellMenu->objectAtIndex_(4);
+	my $splitHor = $shellMenu->objectAtIndex_(5);
+	my $broadcastInput = $shellMenu->objectAtIndex_(16)->menus()->firstObject()->menuItems()->objectAtIndex_(2);
+	my $rows = $cluster->rows;
+	my $cols = $cluster->cols;
+
+	if ( $rows > 1 ) {
+		for(my $row = 1; $row < $rows; $row++) {
+			$splitHor->clickAt_(undef);
+		}
+		$selectNextPane->clickAt_(undef);
+	}
+	my $i = 0;
+	for ( my $row = 0; $row < $rows; $row++ ) {
+		$i++;
+		for ( my $col = 1; $col < $cols; $col++ ) {
+			if ( $i >= $cluster->count ) {
+				last;
+			}
+			$splitVert->clickAt_(undef);
+			$i++;
+		}
+		$selectNextPane->clickAt_(undef);		
+	}
+	my $sessions = $terminal->sessions();
+	my $count = $sessions->count();
+	my @sshCommands = $cluster->sshCommands;
+
+	for ( my $i = 0; $i < $count && $i < $cluster->count; $i++ ) {
+		$sessions->objectAtIndex_($i)->writeContentsOfFile_text_(undef, @sshCommands[$i]);
+	}
+
+	if ( $count > 1 ) {
+		$broadcastInput->clickAt_(undef);
+	}
+}
+
+package Iterm2;
+sub new {
+	my $class = shift;
+	my $self = {
+	};
+	bless $self, $class;
+	$self;
+}
+
+sub openCluster {
+	my ($self, $cluster) = @_;
+
+	$itermApp->createWindowWithDefaultProfileCommand_(undef);
+	my $tab = $itermApp->currentWindow()->currentTab();
+	my $session = $tab->currentSession();
+	my $rows = $cluster->rows;
+	my $cols = $cluster->cols;
+
+	if ( $rows > 1 ) {
+		for(my $row = 1; $row < $rows; $row++) {
+			$session->splitHorizontallyWithDefaultProfile();
+		}
+	}
+	my $i = 0;
+	$tab->sessions()->firstObject()->select();
+	for ( my $row = 0; $row < $rows; $row++ ) {
+		$i++;
+		for ( my $col = 1; $col < $cols; $col++ ) {
+			if ( $i >= $cluster->count ) {
+				last;
+			}			
+			$tab->currentSession()->splitVerticallyWithSameProfile();
+			$i++;
+		}
+		$tab->sessions()->lastObject()->select();
+	}
+	my $sessions = $tab->sessions();
+	my $count = $sessions->count();
+	my @sshCommands = $cluster->sshCommands;
+
+	for ( my $i = 0; $i < $count && $i < $cluster->count; $i++ ) {
+		$sessions->objectAtIndex_($i)->writeContentsOfFile_text_(undef, @sshCommands[$i]);
+	}
+
+	if ( $count > 1 ) {
+		if ( $itermProcess->menuBars()->count() > 0 ) {
+			my $shellMenu = $itermProcess->menuBars()->firstObject()->menuBarItems()->objectAtIndex_(2)->menus()->firstObject()->menuItems();
+			my $broadcastInput = $shellMenu->objectAtIndex_(18)->menus()->firstObject()->menuItems()->objectAtIndex_(2);
+
+			$broadcastInput->clickAt_(undef);
+		} else {
+			print "Warning: UI automation disabled or disallowed";
+		}
+	}
+}
+
+package main;
+
+@ARGV > 0 || die "At least one parameter required";
+
+my $clusters_file = $ENV{'HOME'} . '/.clusters.yaml';
+
+if ($ARGV[0] eq "-l") {
+	Cluster::list($clusters_file);
+	exit 0;
+}
+
+my $prefix = $ARGV[0];
+my $cluster = Cluster::read($clusters_file, $prefix);
+
+$cluster->count > 0 || die "No matching hosts found";
+
+my $iterm;
+
+if ($itermApp->className()->cString() eq "ITerm2Application" ) {
+	$iterm = Iterm2->new();
+} else {
+	$iterm = Iterm->new();
+}
+
+$iterm->openCluster($cluster);
