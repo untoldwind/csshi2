@@ -5,6 +5,8 @@ use feature 'switch';
 use Foundation;
 use POSIX;
 use YAML::Syck; 
+use Getopt::Long;
+use Pod::Usage;
 
 $YAML::Syck::ImplicitTyping = 1;
 
@@ -22,6 +24,7 @@ my $itermApp = SBApplication->applicationWithBundleIdentifier_("com.googlecode.i
 my $itermPredicate = NSPredicate->predicateWithFormat_("bundleIdentifier == 'com.googlecode.iterm2'");
 my $itermProcess = $systemevents->processes()->filteredArrayUsingPredicate_($itermPredicate)->firstObject();
 
+# =================================================================================================================
 package SshEndpoint;
 sub new {
 	my $class = shift;
@@ -39,34 +42,8 @@ sub command {
 	sprintf("ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -l %s %s", $self->{_user}, $self->{_host});
 }
 
+# =================================================================================================================
 package Cluster;
-sub read {
-	my ($file, $match) = @_;
-	my %clusters = %{YAML::Syck::LoadFile($file)};
-	my @endpoints = ();
-
-	filter("", \%clusters, \@endpoints, $match);
-
-	Cluster->new(\@endpoints);
-}
-
-sub filter {
-	my $prefix = shift;
-	my $clusters_ref = shift;
-	my $endpoints_ref = shift;
-	my $match = shift;
-
-	while((my $key, my $value) = each(%$clusters_ref)) {
-		if ($value->{hosts}) {
-			if (index($prefix . $key, $match) == 0) {
-				push(@$endpoints_ref, map { SshEndpoint->new($value->{user}, $_) } @{$value->{hosts}});
-			}
-		} elsif (ref $value eq ref {}) {
-			filter($prefix . $key . "/", $value, $endpoints_ref, $match);
-		}
-	}
-}
-
 sub list {
 	my $file = shift;
 	my %clusters = %{YAML::Syck::LoadFile($file)};
@@ -90,7 +67,7 @@ sub listKeys {
 sub new {
 	my $class = shift;
 	my $self = {
-		_endpoints => shift
+		_endpoints => []
 	};
 	bless $self, $class;
 	$self;
@@ -120,6 +97,41 @@ sub sshCommands {
 	map { $_->command } @{$self->{_endpoints}};
 }
 
+sub addEndpoint {
+	my $self = shift;
+	my $user = shift;
+	my $host = shift;
+
+	push(@{$self->{_endpoints}},SshEndpoint->new($user, $host ));
+}
+
+sub addFromConfig {
+	my $self = shift;
+	my $clusters_conf = shift;
+	my $match = shift;
+
+	$self->filterConfig("", $clusters_conf, $match);
+}
+
+sub filterConfig {
+	my $self = shift;
+	my $prefix = shift;
+	my $clusters_conf = shift;
+	my $match = shift;
+
+	while((my $key, my $value) = each(%$clusters_conf)) {
+		if ($value->{hosts}) {
+			if (index($prefix . $key, $match) == 0) {
+				push(@{$self->{_endpoints}}, map { SshEndpoint->new($value->{user}, $_) } @{$value->{hosts}});
+			}
+		} elsif (ref $value eq ref {}) {
+			$self->filterConfig($prefix . $key . "/", $value, $match);
+		}
+	}
+}
+
+# =================================================================================================================
+# This will be used for the current release version of iTerm (2.0.0.x)
 package Iterm;
 sub new {
 	my $class = shift;
@@ -179,6 +191,8 @@ sub openCluster {
 	}
 }
 
+# =================================================================================================================
+# This will be used for the development version of iTerm (>=2.9)
 package Iterm2;
 sub new {
 	my $class = shift;
@@ -235,21 +249,60 @@ sub openCluster {
 	}
 }
 
+# =================================================================================================================
 package main;
 
-@ARGV > 0 || die "At least one parameter required";
-
 my $clusters_file = $ENV{'HOME'} . '/.clusters.yaml';
+my %clusters_conf = {};
+my $clusters_conf_loaded = 0;
+my $cluster = Cluster->new();
 
-if ($ARGV[0] eq "-l") {
+my $man = 0;
+my $help = 0;
+my $edit = 0;
+my $list = 0;
+
+sub addCluster {
+	my $arg = shift;
+
+	if (!$clusters_conf_loaded) {
+		if (-e $clusters_file) {
+			%clusters_conf = %{YAML::Syck::LoadFile($clusters_file)};	
+		} else {
+			print "Warning: No cluster configuration found at $clusters_file\n";
+		}
+		$clusters_conf_loaded = 1;
+	}
+	if ($arg =~ /([^@]+)@([^@]+)/) {
+		$cluster->addEndpoint($1, $2);
+	} else {
+		$cluster->addFromConfig(\%clusters_conf, $arg);		
+	}
+}
+
+GetOptions(
+	help => \$help, 
+	man => \$man,
+	list => \$list,
+	edit => \$edit,
+	'<>' => \&addCluster) or pod2usage(2);
+
+pod2usage(1) if $help;
+pod2usage(-exitval => 0, -verbose => 2) if $man;
+
+if ($edit) {
+	my $editor = $ENV{'EDITOR'} || "vi";
+	system(sprintf("%s '%s'", $editor, $clusters_file));
+	exit 0;
+} elsif ($list) {
 	Cluster::list($clusters_file);
 	exit 0;
 }
 
-my $prefix = $ARGV[0];
-my $cluster = Cluster::read($clusters_file, $prefix);
-
-$cluster->count > 0 || die "No matching hosts found";
+if ($cluster->count == 0) {
+	print "At least one ssh endpoint should be defined\n";
+	exit 1;
+}
 
 my $iterm;
 
@@ -260,3 +313,50 @@ if ($itermApp->className()->cString() eq "ITerm2Application" ) {
 }
 
 $iterm->openCluster($cluster);
+
+__END__
+
+=head1 NAME
+
+csshi2 - Simple cluster ssh for iTerm2
+
+=head1 SYNOPSIS
+
+csshi2 [options] [cluster | user@host ...]
+
+Options:
+-help brief help message
+
+-man full documentation
+
+-edit edit the cluster file (ussing the $EDITOR)
+
+-list list all configured clusters
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-help>
+Print a brief help message and exits.
+
+=item B<-man>
+Prints the manual page and exits.
+
+=item B<-edit>
+Edit the cluster file using the $EDITOR.
+
+=item B<-list>
+List all configured clusters.
+
+=back
+
+=head1 DESCRIPTION
+
+B<csshi2> opens multiple ssh connections to one or more clusters of
+hosts useing iTerm2. All ssh sessions are opened in a separate pane.
+
+Ssh endpoints can be either defined via command line "user@host" or via a 
+.clusters.yaml file in your home directory.
+
+=cut
