@@ -1,0 +1,18 @@
+_csshi2() {
+    local cur prev opts clusters
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    opts="--help --man --edit --list"
+
+  	if [[ ${cur} == -* ]] ; then
+        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        return 0
+    else
+    	clusters=$(/usr/local/bin/csshi2 -l)
+        COMPREPLY=( $(compgen -W "${clusters}" -- ${cur}) )    	
+    	return 0
+    fi
+}
+
+complete -F _csshi2 csshi2
