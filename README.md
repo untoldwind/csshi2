@@ -8,7 +8,7 @@ At the moment the current release version of iTerm2 (2.0.0.x) is support as well
 
 ## Manually
 
-Just copy the `csshi2` file to one of your bin-directories (like /usr/local/bin/csshi2).
+Just copy the `csshi2` file to one of your bin-directories (like /usr/local/bin/csshi2) and give it the executable flag.
 The files beneath `bash` may be used so support bash completion. Respectively the files beneath `zsh` for zsh completion.
 
 ## Using Homebrew
