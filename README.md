@@ -4,6 +4,29 @@ csshi2
 Very simple cluster ssh implementation for iTerm2 on MacOS.
 At the moment the current release version of iTerm2 (2.0.0.x) is support as well as the development version (>=2.9).
 
+# Installation
+
+## Manually
+
+Just copy the `csshi2` file to one of your bin-directories (like /usr/local/bin/csshi2) and give it the executable flag.
+The files beneath `bash` may be used so support bash completion. Respectively the files beneath `zsh` for zsh completion.
+
+## Using Homebrew
+
+I created a homebrew tap for my projects.
+```
+brew tap untoldwind/extras
+brew install csshi2
+```
+If you are using homebrews's bash-completion you may want to use
+```
+brew install csshi2 --with-bash-completion
+```
+resp. for zsh-completions
+```
+brew install csshi2 --with-zsh-completions
+```
+
 # Usage
 
 ## Basic
