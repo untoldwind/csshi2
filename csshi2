@@ -239,8 +239,8 @@ sub openCluster {
 
 	if ( $count > 1 ) {
 		if ( $itermProcess->menuBars()->count() > 0 ) {
-			my $shellMenu = $itermProcess->menuBars()->firstObject()->menuBarItems()->objectAtIndex_(2)->menus()->firstObject()->menuItems();
-			my $broadcastInput = $shellMenu->objectAtIndex_(19)->menus()->firstObject()->menuItems()->objectAtIndex_(2);
+			my $shellMenu = $itermProcess->menuBars()->firstObject()->menuBarItems()->objectWithName_("Shell")->menus()->firstObject()->menuItems();
+			my $broadcastInput = $shellMenu->objectWithName_("Broadcast Input")->menus()->firstObject()->menuItems()->objectAtIndex_(2);
 
 			$broadcastInput->clickAt_(undef);
 		} else {
