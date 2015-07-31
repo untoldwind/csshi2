@@ -234,7 +234,7 @@ sub openCluster {
 	my @sshCommands = $cluster->sshCommands;
 
 	for ( my $i = 0; $i < $count && $i < $cluster->count; $i++ ) {
-		$sessions->objectAtIndex_($i)->writeContentsOfFile_text_(undef, @sshCommands[$i]);
+		$sessions->objectAtIndex_($i)->writeContentsOfFile_text_newline_(undef, @sshCommands[$i], 1);
 	}
 
 	if ( $count > 1 ) {
