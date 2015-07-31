@@ -217,8 +217,9 @@ sub openCluster {
 		}
 	}
 	my $i = 0;
-	$tab->sessions()->firstObject()->select();
+	my @rowSessions = [];
 	for ( my $row = 0; $row < $rows; $row++ ) {
+		$tab->sessions()->objectAtIndex_($cols * $row)->select();
 		$i++;
 		for ( my $col = 1; $col < $cols; $col++ ) {
 			if ( $i >= $cluster->count ) {
@@ -227,7 +228,6 @@ sub openCluster {
 			$tab->currentSession()->splitVerticallyWithSameProfile();
 			$i++;
 		}
-		$tab->sessions()->lastObject()->select();
 	}
 	my $sessions = $tab->sessions();
 	my $count = $sessions->count();
